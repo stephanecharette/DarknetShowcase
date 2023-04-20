@@ -4,6 +4,14 @@
 #include <random>
 
 
+/* This code was written for a 1-time presentation given to a group of high school students.  I needed an application
+ * to quickly demo both objects detection and movement detection.  It is not great code!  It uses OpenCV's HighGUI
+ * which is normally used as a quick-and-dirty debug tool.  I apologize in advance if this application doesn't look
+ * right on your screen, or if it crashes, since a lot of the rectangle coordinates are hard-coded and were not tested
+ * with different monitor resolutions and webcam dimensions.
+ */
+
+
 int main(int argc, char *argv[])
 {
 	std::cout << "Webcam Showcase" << std::endl;
@@ -34,6 +42,7 @@ int main(int argc, char *argv[])
 			<< ""																			<< std::endl
 			<< "When not specified, the video will default to /dev/video0."					<< std::endl
 			<< "When not specified, the neural network will default to MSCOCO YOLOv4-tiny."	<< std::endl
+			<< "The <video> parameter can be a webcam device or a video file."				<< std::endl
 			<< ""																			<< std::endl;
 
 		throw std::invalid_argument("invalid number of arguments");
@@ -86,7 +95,7 @@ int main(int argc, char *argv[])
 	// need to figure out where tools like xrandr and lshw get the screen dimensions...but for now
 	// since this is a 1-time tool I suspect I'll only ever run once for the demo, hard-code the
 	// display dimensions to 1920 x 1080 which is what this laptop uses
-	const cv::Size screen_dimensions(1920, 1080 - 65);	// minus the titlebar plus whatever that other bar is at the very top of the screen
+	const cv::Size screen_dimensions(1920, 1080);
 
 	/* The main windows are:
 	 *
@@ -123,6 +132,8 @@ int main(int argc, char *argv[])
 		small_window_rects.push_back(r);
 	}
 	const cv::Rect movement_mask_rect = small_window_rects.at(number_of_small_images - 1);
+	const cv::Rect fps_rect(cv::Point(10, small_window_rects[0].y + small_window_rects[0].height + 20), cv::Size(75, 15));
+	const cv::Point fps_point(fps_rect.x, fps_rect.y + fps_rect.height);
 
 	cv::Mat output(screen_dimensions, CV_8UC3, light_blue);
 	cv::putText(output, "object detection with Darknet/YOLO", cv::Point(object_detection_rect.x		, object_detection_rect		.y - 10), cv::FONT_HERSHEY_PLAIN, 2.0, black, 1, cv::LINE_AA);
@@ -140,12 +151,22 @@ int main(int argc, char *argv[])
 		cap.set(cv::VideoCaptureProperties::CAP_PROP_FPS			, 30.0	);
 		cap.set(cv::VideoCaptureProperties::CAP_PROP_FRAME_WIDTH	, large_image_dimensions.width);
 		cap.set(cv::VideoCaptureProperties::CAP_PROP_FRAME_HEIGHT	, large_image_dimensions.height);
+//		cap.set(cv::VideoCaptureProperties::CAP_PROP_BUFFERSIZE		, 10.0	);
 	}
 
 	const double input_fps			= cap.get(cv::VideoCaptureProperties::CAP_PROP_FPS			);
 	const double original_width		= cap.get(cv::VideoCaptureProperties::CAP_PROP_FRAME_WIDTH	);
 	const double original_height	= cap.get(cv::VideoCaptureProperties::CAP_PROP_FRAME_HEIGHT	);
 	const size_t frame_length_ns	= std::round(1000000000.0 / input_fps);
+
+#if 0
+	cv::VideoWriter video_writer;
+	video_writer.open("output.mp4", cv::VideoWriter::fourcc('m', 'p', '4', 'v'), input_fps, screen_dimensions);
+	if (not video_writer.isOpened())
+	{
+		throw std::runtime_error("failed to open output video file");
+	}
+#endif
 
 	std::cout
 		<< ""																									<< std::endl
@@ -180,7 +201,7 @@ int main(int argc, char *argv[])
 	std::time_t previous_fps_tt = 0;
 	size_t previous_fps_frame_index = 0;
 
-	int idx_of_small_image_to_update = 0;
+	int idx_of_small_image_to_update = number_of_small_images - 1;
 	float small_image_confidence = 0.0f;
 
 	size_t frame_index = 0;
@@ -193,15 +214,6 @@ int main(int argc, char *argv[])
 			break;
 		}
 		frame_index ++;
-
-		const auto tt = std::time(nullptr);
-#if 0
-		// put a timestamp in the upper-left corner of the image
-		const auto lt = std::localtime(&tt);
-		char timestamp[50];
-		std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S %Z", lt);
-		cv::putText(output, timestamp, cv::Point(3, 18), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
-#endif
 
 		handler.detect(frame);
 
@@ -216,6 +228,7 @@ int main(int argc, char *argv[])
 		cv::resize(nn.annotate(), output(object_detection_rect), large_image_dimensions, 0.0, 0.0, cv::INTER_LINEAR);
 
 		// every 5 seconds we update the FPS
+		const auto tt = std::time(nullptr);
 		if (tt >= previous_fps_tt + 5)
 		{
 			const float time_elapsed_in_seconds = tt - previous_fps_tt;
@@ -227,7 +240,12 @@ int main(int argc, char *argv[])
 				frames_elapsed > 0 and
 				frames_elapsed < 500)
 			{
-				std::cout << "\r" << std::fixed << std::setprecision(1) << (frames_elapsed / time_elapsed_in_seconds) << " FPS " << std::flush;
+				std::stringstream ss;
+				ss << std::fixed << std::setprecision(1) << (frames_elapsed / time_elapsed_in_seconds) << " FPS ";
+				const auto fps = ss.str();
+				std::cout << "\r" << fps << std::flush;
+				output(fps_rect) = light_blue;
+				cv::putText(output, fps, fps_point, cv::FONT_HERSHEY_PLAIN, 1.0, white, 1, cv::LINE_AA);
 			}
 			previous_fps_tt = tt;
 			previous_fps_frame_index = frame_index;
@@ -294,10 +312,14 @@ int main(int argc, char *argv[])
 
 		cv::imshow("output", output);
 
+#if 0
+		video_writer.write(output);
+#endif
+
 		// wait for the right amount of time so we have the correct FPS
 		now = std::chrono::high_resolution_clock::now();
 		const int milliseconds_to_wait = std::chrono::duration_cast<std::chrono::milliseconds>(next_frame_time_point - now).count();
-		const auto key = cv::waitKey(std::max(2, milliseconds_to_wait));
+		const auto key = cv::waitKey(std::max(1, milliseconds_to_wait));
 		if (key == 27)
 		{
 			break;
